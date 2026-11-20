@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS offres (
     score INTEGER, retenue INTEGER, categorie TEXT, classe_actifs TEXT, ville TEXT,
     debut TEXT, statut_date TEXT, rejet TEXT, raisons TEXT, alertes TEXT,
     notifiee INTEGER DEFAULT 0, lien_ok INTEGER,
-    statut_candidature TEXT DEFAULT 'À postuler'
+    statut_candidature TEXT DEFAULT 'À postuler',
+    meta TEXT DEFAULT '{}', enrichie INTEGER DEFAULT 0, tentatives INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_cle ON offres(cle_doublon);
 CREATE TABLE IF NOT EXISTS emails (
@@ -35,10 +36,22 @@ def maintenant():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
+COLONNES_AJOUTEES = {"meta": "TEXT DEFAULT '{}'", "enrichie": "INTEGER DEFAULT 0", "tentatives": "INTEGER DEFAULT 0"}
+
+
+def _migrer(conn):
+    """Ajoute les colonnes récentes aux bases créées par une version plus ancienne du robot."""
+    existantes = {r[1] for r in conn.execute("PRAGMA table_info(offres)")}
+    for nom, definition in COLONNES_AJOUTEES.items():
+        if nom not in existantes:
+            conn.execute(f"ALTER TABLE offres ADD COLUMN {nom} {definition}")
+
+
 def ouvrir(chemin):
     conn = sqlite3.connect(str(chemin))
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    _migrer(conn)
     return conn
 
 
@@ -68,6 +81,7 @@ def enregistrer_offre(conn, offre, source, analyse, now):
     """Enregistre une offre. Renvoie : 'nouvelle', 'republiee', 'modifiee', 'doublon' ou 'inchangee'."""
     h, cle = _hash(offre), cle_doublon(offre)
     ca = _champs_analyse(analyse)
+    meta = json.dumps({k: offre.get(k, "") for k in ("famille", "structure", "contrat")}, ensure_ascii=False)
     row = conn.execute("SELECT * FROM offres WHERE id_source=?", (offre["id_source"],)).fetchone()
     if row is None:
         autre = conn.execute("SELECT * FROM offres WHERE cle_doublon=? ORDER BY id LIMIT 1", (cle,)).fetchone()
@@ -84,10 +98,10 @@ def enregistrer_offre(conn, offre, source, analyse, now):
         conn.execute(
             """INSERT INTO offres (id_source, cle_doublon, source, societe, titre, lieu, url, description,
                date_publication, premiere_detection, derniere_vue, derniere_modif, hash,
-               score, retenue, categorie, classe_actifs, ville, debut, statut_date, rejet, raisons, alertes)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               score, retenue, categorie, classe_actifs, ville, debut, statut_date, rejet, raisons, alertes, meta)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (offre["id_source"], cle, source, offre["societe"], offre["titre"], offre["lieu"], offre["url"],
-             offre["description"], offre["date_publication"], now, now, now, h) + ca)
+             offre["description"], offre["date_publication"], now, now, now, h) + ca + (meta,))
         return "nouvelle"
     statut = "inchangee"
     if not row["actif"]:
@@ -97,10 +111,12 @@ def enregistrer_offre(conn, offre, source, analyse, now):
         statut = "modifiee"
         conn.execute("UPDATE offres SET derniere_modif=? WHERE id=?", (now, row["id"]))
     conn.execute(
-        """UPDATE offres SET derniere_vue=?, hash=?, titre=?, lieu=?, url=?, description=?, date_publication=?,
-           score=?, retenue=?, categorie=?, classe_actifs=?, ville=?, debut=?, statut_date=?, rejet=?, raisons=?, alertes=?
+        """UPDATE offres SET derniere_vue=?, hash=?, titre=?, lieu=?, url=?,
+           description=CASE WHEN ?='' THEN description ELSE ? END, date_publication=?,
+           score=?, retenue=?, categorie=?, classe_actifs=?, ville=?, debut=?, statut_date=?, rejet=?, raisons=?, alertes=?, meta=?
            WHERE id=?""",
-        (now, h, offre["titre"], offre["lieu"], offre["url"], offre["description"], offre["date_publication"]) + ca + (row["id"],))
+        (now, h, offre["titre"], offre["lieu"], offre["url"], offre["description"], offre["description"],
+         offre["date_publication"]) + ca + (meta, row["id"]))
     return statut
 
 
@@ -128,3 +144,38 @@ def journaliser_verification(conn, now, statut, lues, nouvelles, republiees, mod
     conn.execute(
         "INSERT INTO verifications (date_verif, statut, nb_lues, nb_nouvelles, nb_republiees, nb_modifiees, erreurs) VALUES (?,?,?,?,?,?,?)",
         (now, statut, lues, nouvelles, republiees, modifiees, "; ".join(erreurs)))
+
+
+def description_connue(conn, id_source):
+    """Description déjà enregistrée (par exemple lue sur la page de l'annonce lors d'une vérification précédente)."""
+    r = conn.execute("SELECT description FROM offres WHERE id_source=?", (id_source,)).fetchone()
+    return (r["description"] or "") if r else ""
+
+
+def offres_a_enrichir(conn, limite=15, tentatives_max=3):
+    """Offres sans description dont la page vaut la peine d'être lue : retenues, ou rejetées pour une
+    note trop basse alors qu'elles viennent d'une société de gestion."""
+    lignes = conn.execute(
+        """SELECT * FROM offres WHERE actif=1 AND enrichie=0 AND tentatives<? AND (description IS NULL OR description='')
+           AND url NOT LIKE '%linkedin.com%' AND url NOT LIKE '%indeed.%' ORDER BY retenue DESC, score DESC""",
+        (tentatives_max,)).fetchall()
+    gardees = []
+    for r in lignes:
+        meta = json.loads(r["meta"] or "{}")
+        gestion = meta.get("structure") == "Société de gestion" or meta.get("famille") == "Gestion d'actifs"
+        if r["retenue"] or ((r["rejet"] or "").startswith("note trop basse") and gestion):
+            gardees.append(r)
+        if len(gardees) >= limite:
+            break
+    return gardees
+
+
+def noter_tentative(conn, id_):
+    conn.execute("UPDATE offres SET tentatives=tentatives+1 WHERE id=?", (id_,))
+
+
+def enregistrer_enrichissement(conn, id_, description, analyse):
+    conn.execute(
+        """UPDATE offres SET description=?, enrichie=1, score=?, retenue=?, categorie=?, classe_actifs=?, ville=?,
+           debut=?, statut_date=?, rejet=?, raisons=?, alertes=? WHERE id=?""",
+        (description,) + _champs_analyse(analyse) + (id_,))

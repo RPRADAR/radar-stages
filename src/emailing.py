@@ -1,6 +1,7 @@
 """Fabrication et envoi des emails (offres, RAS, erreur) par SMTP sécurisé."""
 import html
 import os
+import re
 import smtplib
 import ssl
 from datetime import datetime, timezone
@@ -30,9 +31,16 @@ def _date_fr(iso):
         return "Non précisée"
 
 
+def _resume(description):
+    """Début utile de la description : on saute la présentation de l'entreprise et on part des missions."""
+    texte = re.sub(r"\s+", " ", description or "").strip()
+    m = re.search(r"\b(vos missions|missions?|your responsibilities|responsabilit[ée]s|what you.ll do)\b\s*:?", texte, re.I)
+    return texte[m.end():].strip() if m and m.end() < len(texte) - 80 else texte
+
+
 def _lignes_offre(o):
     import json
-    resume = (o["description"] or "").strip()
+    resume = _resume(o["description"])
     resume = (resume[:300].rsplit(" ", 1)[0] + "…") if len(resume) > 300 else resume
     resume = resume or "Description complète non disponible dans la source : ouvre l'annonce pour la lire."
     raisons = json.loads(o["raisons"] or "[]")

@@ -20,6 +20,7 @@ import emailing
 from alertes_email import collecter_alertes
 from connecteur_jjf import recuperer_offres_jjf
 from connecteurs import recuperer_offres
+import enrichissement
 from scoring import analyser, charger_societes
 
 RACINE = Path(__file__).resolve().parent.parent
@@ -58,7 +59,7 @@ def lien_accessible(url):
         return True
 
 
-def executer(chemin_db, sources, envoi=None, societes=None, verifier_liens=True):
+def executer(chemin_db, sources, envoi=None, societes=None, verifier_liens=True, enrichir=False, telecharger=None):
     """Fait une vérification complète. `envoi` = fonction d'envoi d'email (None = essai sans envoi)."""
     conn = bd.ouvrir(chemin_db)
     societes = societes if societes is not None else charger_societes()
@@ -76,9 +77,10 @@ def executer(chemin_db, sources, envoi=None, societes=None, verifier_liens=True)
         sources_ok += 1
         compte["lues"] += len(offres)
         for o in offres:
-            a = analyser(o, societes)
             for k in ("famille", "structure", "contrat"):
                 o.setdefault(k, "")
+            # si la description a déjà été lue sur la page de l'annonce, on la réutilise pour la notation
+            a = analyser(dict(o, description=o["description"] or bd.description_connue(conn, o["id_source"])), societes)
             if not _est_un_stage(a):
                 continue
             etat = bd.enregistrer_offre(conn, o, nom_source, a, now)
@@ -90,6 +92,12 @@ def executer(chemin_db, sources, envoi=None, societes=None, verifier_liens=True)
         conn.commit()
         log.info("Source %s : %d offres lues", nom_source, len(offres))
 
+    if enrichir:   # lecture des pages d'annonces des entreprises (description complète + date de début)
+        try:
+            nb = enrichissement.enrichir(conn, societes, telecharger or enrichissement.telecharger_page)
+            log.info("Enrichissement : %d pages lues", nb)
+        except Exception as e:
+            log.error("Enrichissement en erreur (sans gravité) : %s", e)
     if verifier_liens:
         for r in bd.offres_a_notifier(conn):
             if r["lien_ok"] is None:
@@ -149,7 +157,7 @@ def main():
         print("Email de test envoyé.")
         return 0
     envoi = None if args.sans_email else emailing.envoyer
-    resultat = executer(RACINE / "data" / "radar.db", sources_par_defaut(), envoi)
+    resultat = executer(RACINE / "data" / "radar.db", sources_par_defaut(), envoi, enrichir=True)
     log.info("Résultat : %s", resultat)
     if envoi is not None and not resultat["envoye"]:
         return 1  # l'exécution apparaîtra en rouge sur GitHub, ce qui te prévient

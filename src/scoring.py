@@ -102,10 +102,31 @@ def _contient(texte, mots):
     return [m for m in mots if m in texte]
 
 
+LIBELLES_DEBUT = (r"(?:date (?:previsionnelle |prevue |souhaitee )?(?:de |d')?(?:prise de (?:fonction|poste)|debut|demarrage)"
+                  r"|prise de (?:fonction|poste)|start date|starting date|date de debut|debut du stage|demarrage)")
+
+
+def _debut_numerique(t):
+    """Date de début écrite en chiffres après un libellé : 'Date prévue de prise de fonction : 12/01/2027'."""
+    m = re.search(LIBELLES_DEBUT + r"\D{0,20}?(\d{1,2})/(\d{1,2})/(20\d\d)", t)
+    if m:
+        return int(m.group(3)), int(m.group(2))
+    m = re.search(LIBELLES_DEBUT + r"\D{0,20}?(20\d\d)-(\d{2})-\d{2}", t)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    m = re.search(LIBELLES_DEBUT + r"\D{0,20}?(\d{1,2})/(20\d\d)", t)
+    if m:
+        return int(m.group(2)), int(m.group(1))
+    return None
+
+
 def extraire_debut(texte, aujourd_hui=None):
     """Cherche une date de début ('juin 2027', 'starting in April'...). Renvoie (année, mois) ou None."""
     aujourd_hui = aujourd_hui or date.today()
     t = _norm(texte)
+    numerique = _debut_numerique(t)
+    if numerique and 1 <= numerique[1] <= 12:
+        return numerique
     motif = re.compile(r"\b(" + "|".join(MOIS) + r")\b(?:\s+(?:de\s+)?(20\d\d))?")
     cles = ("debut", "start", "starting", "from", "a partir", "des ", "demarrage", "commenc", "begin", "stage de", "stage en", "stage -")
     for m in motif.finditer(t):
