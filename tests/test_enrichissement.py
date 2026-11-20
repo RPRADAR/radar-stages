@@ -1,5 +1,5 @@
 """Tests de l'enrichissement (lecture des pages d'annonces) avec de fausses pages, sans Internet."""
-import sqlite3, sys, tempfile, unittest
+import sqlite3, sys, tempfile, unittest, unittest.mock
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import base_donnees as bd
@@ -111,6 +111,30 @@ class TestEnrichissement(unittest.TestCase):
         self.assertEqual(r["nb_a_notifier"], 1)
         self.assertIn("Date de début non indiquée", e.mails[0][1])        # alerte "à vérifier" conservée
         self.assertEqual(bd.ouvrir(self.db).execute("SELECT tentatives FROM offres").fetchone()[0], 1)
+
+    def test_robots_txt_respecte(self):
+        class Rep:
+            def __init__(self, code, texte=""): self.status_code, self.text = code, texte
+        cas = [(Rep(200, "User-agent: *\nDisallow: /fr/nos-offres-emploi/"), False),
+               (Rep(200, "User-agent: *\nDisallow: /prive/"), True),
+               (Rep(200, "User-agent: RadarStages\nDisallow:\n\nUser-agent: *\nDisallow: /"), True),
+               (Rep(403), False), (Rep(404), True)]
+        for reponse, attendu in cas:
+            en._ROBOTS.clear()
+            with unittest.mock.patch("enrichissement.requests.get", return_value=reponse):
+                self.assertEqual(en.robots_autorise("https://site.exemple/fr/nos-offres-emploi/x"), attendu)
+        en._ROBOTS.clear()
+        with unittest.mock.patch("enrichissement.requests.get", side_effect=ConnectionError("réseau")):
+            self.assertTrue(en.robots_autorise("https://autre.exemple/a"))
+
+    def test_page_interdite_par_robots_abandonnee(self):
+        appels = []
+        def fetch(u): appels.append(u); raise en.RobotsInterdit("interdit")
+        src = lambda: [offre("B", "Gestion Sous Mandat Assistant Gérant")]
+        for _ in range(3):
+            r = radar.executer(self.db, [("jjf", src)], Envoi(), self.societes, verifier_liens=False, enrichir=True, telecharger=fetch)
+        self.assertEqual(len(appels), 1)                                  # un seul essai, puis abandon définitif
+        self.assertEqual(bd.ouvrir(self.db).execute("SELECT tentatives FROM offres").fetchone()[0], 99)
 
     def test_pages_linkedin_et_indeed_jamais_lues(self):
         with self.assertRaises(ValueError):
