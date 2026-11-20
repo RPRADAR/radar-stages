@@ -175,6 +175,10 @@ def noter_tentative(conn, id_):
     conn.execute("UPDATE offres SET tentatives=tentatives+1 WHERE id=?", (id_,))
 
 
+def abandonner(conn, id_):
+    conn.execute("UPDATE offres SET tentatives=99 WHERE id=?", (id_,))
+
+
 def enregistrer_enrichissement(conn, id_, description, analyse):
     conn.execute(
         """UPDATE offres SET description=?, enrichie=2, score=?, retenue=?, categorie=?, classe_actifs=?, ville=?,
