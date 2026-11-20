@@ -22,6 +22,18 @@ def page(debut, missions="Assister l'équipe commerciale sur la préparation des
     <footer>Mentions légales Cookies</footer></body></html>"""
 
 
+def page_aspnet(debut):
+    """Page réelle type Amundi : tout est dans un <form>, et le fil d'Ariane contient déjà « Détail de l'offre »."""
+    return f"""<html><body><form id="aspnetForm"><nav>Menu</nav>
+    <div><a>Accueil</a> › <a>Liste des offres</a> › <span>Détail de l'offre</span></div>
+    <div><a>Ma sélection : 0 offre(s)</a></div>
+    <div><h3>Types de métiers</h3><ul><li>Gestion d'Actifs (46)</li><li>CDI (35)</li><li>Stage (77)</li><li>VIE (9)</li></ul></div>
+    <h1>Détail de l'offre</h1><h2>Informations générales</h2><h3>Entité</h3><p>{ENTITE}</p>
+    <h2>Description du poste</h2><h3>Date prévue de prise de fonction</h3><p>{debut}</p>
+    <h3>Missions</h3><p>Assister l'équipe commerciale sur la préparation des rendez-vous clients et suivre la performance des fonds.</p>
+    </form><footer>Mentions légales Cookies</footer></body></html>"""
+
+
 def offre(id_, titre, lieu="Paris"):
     return {"societe": "Amundi", "plateforme": "jjf", "id_source": id_, "titre": titre, "lieu": lieu, "url": f"https://jobs.exemple.com/{id_}",
             "description": "", "date_publication": "2026-11-17", "famille": "Gestion d'actifs", "structure": "Société de gestion", "contrat": "Stage"}
@@ -41,6 +53,22 @@ class TestEnrichissement(unittest.TestCase):
         t = en.extraire_description(page("12/01/2027"))
         self.assertIn("12/01/2027", t); self.assertIn("Missions", t)
         self.assertNotIn("CDI (35)", t); self.assertNotIn("Mentions légales", t); self.assertNotIn("Mon compte", t)
+
+    def test_page_dans_un_formulaire_aspnet(self):
+        t = en.extraire_description(page_aspnet("12/01/2027"))
+        self.assertGreaterEqual(len(t), en.LONGUEUR_MIN)
+        self.assertEqual(s.extraire_debut(t), (2027, 1))                  # la date prévue est bien retrouvée
+        self.assertNotIn("CDI (35)", t); self.assertNotIn("Ma sélection", t); self.assertNotIn("Mentions légales", t)
+
+    def test_ancienne_lecture_refaite(self):
+        src = lambda: [offre("B", "Gestion Sous Mandat Assistant Gérant")]
+        radar.executer(self.db, [("jjf", src)], Envoi(), self.societes, verifier_liens=False)
+        conn = bd.ouvrir(self.db)
+        conn.execute("UPDATE offres SET description='Détail de l''offre | Ma sélection : 0 offre(s) | Menu', enrichie=1"); conn.commit(); conn.close()
+        radar.executer(self.db, [("jjf", src)], Envoi(), self.societes, verifier_liens=False, enrichir=True,
+                       telecharger=lambda u: page_aspnet("04/05/2027"))
+        r = bd.ouvrir(self.db).execute("SELECT description, enrichie, debut FROM offres").fetchone()
+        self.assertEqual((r["enrichie"], r["debut"]), (2, "Mai 2027")); self.assertIn("Missions", r["description"])
 
     def test_extraction_json_ld(self):
         html = ('<html><script type="application/ld+json">{"@type":"JobPosting","description":"&lt;p&gt;Stage gestion de portefeuille, '
