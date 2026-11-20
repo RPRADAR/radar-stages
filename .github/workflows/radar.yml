@@ -32,6 +32,7 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          ALERTES_EMAIL: ${{ secrets.ALERTES_EMAIL }}
         run: python src/radar.py
       - name: Enregistrer la base de données
         if: always()
