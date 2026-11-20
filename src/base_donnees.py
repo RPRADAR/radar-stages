@@ -153,10 +153,11 @@ def description_connue(conn, id_source):
 
 
 def offres_a_enrichir(conn, limite=15, tentatives_max=3):
-    """Offres sans description dont la page vaut la peine d'être lue : retenues, ou rejetées pour une
-    note trop basse alors qu'elles viennent d'une société de gestion."""
+    """Offres dont la page vaut la peine d'être lue : retenues, ou rejetées pour une note trop basse alors
+    qu'elles viennent d'une société de gestion. (enrichie=1 : lecture faite avec l'ancienne version, à refaire.)"""
     lignes = conn.execute(
-        """SELECT * FROM offres WHERE actif=1 AND enrichie=0 AND tentatives<? AND (description IS NULL OR description='')
+        """SELECT * FROM offres WHERE actif=1 AND tentatives<?
+           AND ((enrichie=0 AND (description IS NULL OR description='')) OR enrichie=1)
            AND url NOT LIKE '%linkedin.com%' AND url NOT LIKE '%indeed.%' ORDER BY retenue DESC, score DESC""",
         (tentatives_max,)).fetchall()
     gardees = []
@@ -176,6 +177,6 @@ def noter_tentative(conn, id_):
 
 def enregistrer_enrichissement(conn, id_, description, analyse):
     conn.execute(
-        """UPDATE offres SET description=?, enrichie=1, score=?, retenue=?, categorie=?, classe_actifs=?, ville=?,
+        """UPDATE offres SET description=?, enrichie=2, score=?, retenue=?, categorie=?, classe_actifs=?, ville=?,
            debut=?, statut_date=?, rejet=?, raisons=?, alertes=? WHERE id=?""",
         (description,) + _champs_analyse(analyse) + (id_,))

@@ -21,7 +21,7 @@ from scoring import analyser
 log = logging.getLogger("radar")
 EN_TETES = {"User-Agent": "RadarStages/1.0 (veille personnelle de stages)", "Accept-Language": "fr,en;q=0.8"}
 HOTES_INTERDITS = ("linkedin.com", "indeed.")
-LONGUEUR_MIN = 200
+LONGUEUR_MIN = 400
 LONGUEUR_MAX = 6000
 TITRES_DEBUT_OFFRE = ["detail de l'offre", "description du poste", "description de l'offre", "descriptif du poste",
                       "job description", "job details", "about the job", "le poste", "the role"]
@@ -64,12 +64,19 @@ def extraire_description(html):
     soup = BeautifulSoup(html, "html.parser")
     texte = _description_json_ld(soup)
     if not texte:
-        for balise in soup(["script", "style", "noscript", "nav", "header", "footer", "form", "aside", "select"]):
+        # Attention : on ne supprime PAS les <form> : certains sites (ASP.NET) enveloppent toute la page dans un formulaire.
+        for balise in soup(["script", "style", "noscript", "nav", "header", "footer", "aside", "select"]):
             balise.decompose()
         zone = soup.find("main") or soup.find("article") or soup.body or soup
         lignes = [re.sub(r"\s+", " ", l).strip() for l in zone.get_text("\n").splitlines()]
         lignes = [l for l in lignes if l]
-        debut = next((i for i, l in enumerate(lignes) if _norm_ligne(l) in TITRES_DEBUT_OFFRE), 0)
+        # On part du DERNIER titre "Détail de l'offre" (le premier est souvent le fil d'Ariane, en haut de page).
+        debut = 0
+        for titre in TITRES_DEBUT_OFFRE:
+            positions = [i for i, l in enumerate(lignes) if _norm_ligne(l) == titre]
+            if positions:
+                debut = positions[-1]
+                break
         texte = "\n".join(lignes[debut:])
     return texte[:LONGUEUR_MAX]
 
