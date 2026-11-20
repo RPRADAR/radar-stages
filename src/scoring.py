@@ -35,7 +35,7 @@ MOIS = {"janvier": 1, "january": 1, "fevrier": 2, "february": 2, "mars": 3, "mar
 MOTS_STAGE = ["stage", "stagiaire", "intern", "internship", "trainee"]
 MOTS_PAS_STAGE = ["alternance", "apprenti", "apprenticeship", "work-study", "cdi", "cdd",
                   "permanent", "graduate programme", "graduate program", "graduate scheme",
-                  "vie ", "volontariat international"]
+                  "volontariat international"]
 # Exclusions strictes (cherchées dans le TITRE)
 EXCLUSIONS_TITRE = [
     (r"\bm&a\b|\bm and a\b|mergers|fusions? (et|&) acquisitions?", "M&A"),
@@ -138,7 +138,15 @@ def _coeur(nom):
     return " ".join(m for m in re.findall(r"[a-z0-9&]+", base) if m not in NOMS_INUTILES)
 
 
+def _nom_exact(nom):
+    """Nom complet normalisé, sans parenthèses : 'Pictet Asset Management' -> 'pictet asset management'."""
+    base = _norm(re.sub(r"\([^)]*\)", " ", nom or ""))
+    return " ".join(re.findall(r"[a-z0-9&]+", base))
+
+
 def charger_societes(chemin=None):
+    """Renvoie un ensemble de noms : 'amundi' (nom court, ambigu : peut être le groupe bancaire)
+    et '=amundi asset management' (nom EXACT d'une société de ta liste : preuve forte d'Asset Management)."""
     chemin = Path(chemin) if chemin else Path(__file__).resolve().parent.parent / "data" / "companies.csv"
     noms = set()
     with open(chemin, encoding="utf-8-sig") as f:
@@ -146,6 +154,11 @@ def charger_societes(chemin=None):
             coeur = _coeur(ligne["nom"])
             if coeur:
                 noms.add(coeur)
+            exact = _nom_exact(ligne["nom"])
+            if exact:
+                noms.add("=" + exact)
+            for acronyme in re.findall(r"\(([^)]+)\)", ligne["nom"]):
+                noms.add("=" + _nom_exact(acronyme))
     return noms
 
 
@@ -172,7 +185,8 @@ def analyser(offre, societes_connues=None, aujourd_hui=None):
             return rejeter(f"contrat : {offre.get('contrat')} (pas un stage)")
     else:
         zone = f"{titre} {description[:300]}"
-        if any(m in f" {zone} " for m in MOTS_PAS_STAGE):
+        brut = f"{offre.get('titre', '')} {(offre.get('description') or '')[:300]}"
+        if any(m in f" {zone} " for m in MOTS_PAS_STAGE) or re.search(r"\bVIE\b", brut):
             return rejeter("alternance / CDI / CDD / graduate programme")
         if not any(re.search(rf"\b{m}", zone) for m in MOTS_STAGE):
             return rejeter("ce n'est pas clairement un stage")
@@ -207,10 +221,13 @@ def analyser(offre, societes_connues=None, aujourd_hui=None):
         resultat["raisons"].append("Société de gestion d'actifs.")
     else:
         coeur_societe = _coeur(offre.get("societe"))
-        if coeur_societe and coeur_societe in societes_connues:
-            pts_am += 10
-            resultat["raisons"].append("Société présente dans ta liste de suivi.")
-        trouves = _contient(texte, MOTS_AM)
+        if "=" + _nom_exact(offre.get("societe")) in societes_connues:
+            pts_am += 20
+            resultat["raisons"].append("Société de gestion présente dans ta liste de suivi.")
+        elif coeur_societe and coeur_societe in societes_connues:
+            pts_am += 10  # nom court : peut désigner le groupe bancaire plutôt que sa filiale de gestion
+            resultat["raisons"].append("Groupe présent dans ta liste de suivi (filiale de gestion à confirmer).")
+        trouves = _contient(f"{texte} {_norm(offre.get('societe'))}", MOTS_AM)
         pts_am += 15 if len(trouves) >= 2 else 8 if len(trouves) == 1 else 0
         if trouves:
             resultat["raisons"].append("Vocabulaire Asset Management dans l'annonce.")

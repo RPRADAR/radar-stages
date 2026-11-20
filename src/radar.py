@@ -7,6 +7,7 @@ Le robot : une exécution = une vérification complète.
 import argparse
 import csv
 import logging
+import os
 import sys
 from functools import partial
 from pathlib import Path
@@ -16,16 +17,20 @@ import requests
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import base_donnees as bd
 import emailing
+from alertes_email import collecter_alertes
 from connecteur_jjf import recuperer_offres_jjf
 from connecteurs import recuperer_offres
 from scoring import analyser, charger_societes
 
 RACINE = Path(__file__).resolve().parent.parent
+SOURCE_ALERTES = "alertes_email"
 log = logging.getLogger("radar")
 
 
 def sources_par_defaut():
     sources = [("jjf", recuperer_offres_jjf)]
+    if os.environ.get("ALERTES_EMAIL", "").strip().lower() == "oui":   # alertes LinkedIn / Indeed
+        sources.append((SOURCE_ALERTES, collecter_alertes))
     fichier = RACINE / "data" / "sources.csv"
     if fichier.exists():
         with open(fichier, encoding="utf-8-sig") as f:
@@ -43,6 +48,8 @@ def _est_un_stage(analyse):
 
 def lien_accessible(url):
     """False seulement si la page n'existe plus (404/410). Un blocage anti-robot (403...) n'est pas une preuve."""
+    if "linkedin.com" in url or "indeed." in url:
+        return True  # ces sites bloquent les robots : on ne les interroge pas
     try:
         r = requests.get(url, headers={"User-Agent": "RadarStages/1.0"}, timeout=10, stream=True)
         r.close()
@@ -78,7 +85,8 @@ def executer(chemin_db, sources, envoi=None, societes=None, verifier_liens=True)
             cle = {"nouvelle": "nouvelles", "republiee": "republiees", "modifiee": "modifiees", "doublon": "doublons"}.get(etat)
             if cle:
                 compte[cle] += 1
-        bd.marquer_disparues(conn, nom_source, now)
+        if nom_source != SOURCE_ALERTES:   # une alerte ne liste pas toutes les offres : elle ne prouve pas qu'une offre a disparu
+            bd.marquer_disparues(conn, nom_source, now)
         conn.commit()
         log.info("Source %s : %d offres lues", nom_source, len(offres))
 
