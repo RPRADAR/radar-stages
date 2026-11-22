@@ -21,6 +21,7 @@ from alertes_email import collecter_alertes
 from connecteur_jjf import recuperer_offres_jjf
 from connecteurs import recuperer_offres
 import enrichissement
+import workday
 from scoring import analyser, charger_societes
 
 RACINE = Path(__file__).resolve().parent.parent
@@ -64,6 +65,7 @@ def executer(chemin_db, sources, envoi=None, societes=None, verifier_liens=True,
     conn = bd.ouvrir(chemin_db)
     societes = societes if societes is not None else charger_societes()
     now = bd.maintenant()
+    workday.CACHE_DESCRIPTION = lambda id_source: bd.description_connue(conn, id_source)   # évite de relire les offres déjà connues
     compte = {"lues": 0, "nouvelles": 0, "republiees": 0, "modifiees": 0, "doublons": 0}
     erreurs, sources_ok = [], 0
 

@@ -111,3 +111,13 @@ def recuperer_offres(plateforme, identifiant, societe):
     if plateforme not in CONNECTEURS:
         raise ValueError(f"Plateforme inconnue : {plateforme}")
     return CONNECTEURS[plateforme](identifiant, societe)
+
+
+# Sites carrières Talentsoft (flux RSS officiels) : le module est importé ici pour éviter une dépendance circulaire
+from talentsoft import collecter_talentsoft  # noqa: E402
+
+CONNECTEURS["talentsoft"] = collecter_talentsoft
+
+from workday import collecter_workday  # noqa: E402
+
+CONNECTEURS["workday"] = collecter_workday
