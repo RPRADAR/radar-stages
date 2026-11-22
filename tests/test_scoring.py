@@ -76,7 +76,7 @@ class TestScoring(unittest.TestCase):
 
     def test_ville_hors_zone(self):
         r = analyse(societe="Amundi", titre="Assistant gestion Actions", lieu="Rennes", contrat="Stage", structure="Société de gestion")
-        self.assertTrue(any("hors des 4 villes" in a for a in r["alertes"]))
+        self.assertFalse(r["retenue"]); self.assertIn("localisation hors des 4 villes", r["rejet"])
 
     def test_extraction_dates(self):
         self.assertEqual(s.extraire_debut("Start date: June 2027", AUJ), (2027, 6))
