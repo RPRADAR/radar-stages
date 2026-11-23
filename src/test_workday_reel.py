@@ -1,7 +1,9 @@
 """Test réel Workday : vérifie que le robot sait lire les sites carrières Workday (Columbia Threadneedle via Ameriprise, GAM)."""
+import logging
 import enrichissement
 from workday import collecter_workday
 
+logging.basicConfig(level=logging.INFO, format="   (%(levelname)s) %(message)s")
 SITES = [("Columbia Threadneedle", "ameriprise.wd5.myworkdayjobs.com/Ameriprise"),
          ("GAM Investments", "gam.wd3.myworkdayjobs.com/GAM")]
 for nom, identifiant in SITES:

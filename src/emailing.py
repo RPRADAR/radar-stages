@@ -65,11 +65,16 @@ def _lignes_offre(o):
     return texte
 
 
-def composer_offres(offres, erreurs=()):
+def _note_ignorees(ignorees):
+    return ("\n\nℹ️ Sources temporairement ignorées (sans gravité) : " + " ; ".join(ignorees)) if ignorees else ""
+
+
+def composer_offres(offres, erreurs=(), ignorees=()):
     blocs = [_lignes_offre(o) for o in offres]
     texte = ("\n" + "-" * 40 + "\n").join("\n".join(b) for b in blocs)
     if erreurs:
         texte += "\n\n⚠️ Sources en erreur pendant cette vérification : " + " ; ".join(erreurs)
+    texte += _note_ignorees(ignorees)
     texte += f"\n\nDernière vérification : {heure_paris()}"
     corps = ""
     for b in blocs:
@@ -83,8 +88,9 @@ def composer_offres(offres, erreurs=()):
     return OBJET_OFFRES, texte, f"<html><body style='font-family:Arial,sans-serif'>{corps}<p>Dernière vérification : {heure_paris()}</p></body></html>"
 
 
-def composer_ras():
-    texte = ("RAS.\nAucune nouvelle offre de stage correspondant à tes critères n'a été détectée lors de cette dernière vérification.\n"
+def composer_ras(ignorees=()):
+    texte = ("RAS.\nAucune nouvelle offre de stage correspondant à tes critères n'a été détectée lors de cette dernière vérification."
+             f"{_note_ignorees(ignorees)}\n"
              f"Dernière vérification : {heure_paris()}.")
     return OBJET_RAS, texte, "<html><body style='font-family:Arial,sans-serif'>" + html.escape(texte).replace("\n", "<br>") + "</body></html>"
 

@@ -10,7 +10,7 @@ ID = "ameriprise.wd5.myworkdayjobs.com/Ameriprise"
 BASE = "https://ameriprise.wd5.myworkdayjobs.com/wday/cxs/ameriprise/Ameriprise"
 
 POSTES = {
-    "intern": [
+    "": [
         {"title": "Investment Analyst Intern", "externalPath": "/job/London/Investment-Analyst-Intern_R1001", "locationsText": "London, United Kingdom",
          "postedOn": "Posted 3 Days Ago", "bulletFields": ["R1001"]},
         {"title": "Sales Support Intern", "externalPath": "/job/Multiple/Sales-Support-Intern_R1002", "locationsText": "2 Locations",
@@ -19,10 +19,6 @@ POSTES = {
          "postedOn": "Posted 5 Days Ago", "bulletFields": ["R1003"]},
         {"title": "Senior Portfolio Manager", "externalPath": "/job/London/Senior-PM_R1004", "locationsText": "London", "postedOn": "Posted Today", "bulletFields": ["R1004"]},
         {"title": "Apprentice Analyst Intern", "externalPath": "/job/London/Apprentice_R1005", "locationsText": "London", "postedOn": "Posted Today", "bulletFields": ["R1005"]},
-    ],
-    "London intern": [
-        {"title": "Investment Analyst Intern", "externalPath": "/job/London/Investment-Analyst-Intern_R1001", "locationsText": "London, United Kingdom",
-         "postedOn": "Posted 3 Days Ago", "bulletFields": ["R1001"]},   # doublon : même offre trouvée par une autre recherche
     ],
 }
 DETAILS = {
@@ -35,7 +31,7 @@ DETAILS = {
 
 
 class Rep:
-    def __init__(self, data): self.data = data
+    def __init__(self, data, code=200, entetes=None): self.data, self.status_code, self.headers = data, code, entetes or {}
     def raise_for_status(self): pass
     def json(self): return self.data
 
@@ -54,10 +50,37 @@ class Faux:
 class TestWorkday(unittest.TestCase):
     def setUp(self):
         wd.CACHE_DESCRIPTION = None
+        wd.PAUSE = 0
+        wd.PAUSE_DETAIL = 0
+        wd.time.sleep = lambda *a, **k: None      # les tests n'attendent pas vraiment
         self.faux = Faux()
 
     def collecter(self, robots=lambda u: True):
         return wd.collecter_workday(ID, "Columbia Threadneedle", post=self.faux.post, get=self.faux.get, robots=robots)
+
+    def test_pagination_complete(self):
+        postes = [{"title": f"Analyste {i}", "externalPath": f"/job/X/A{i}_R{i}", "locationsText": "Paris", "bulletFields": [f"R{i}"]} for i in range(45)]
+        postes[33] = {"title": "Stagiaire Gestion", "externalPath": "/job/X/Stagiaire_R33", "locationsText": "Paris", "bulletFields": ["R33"]}
+        appels = []
+        def post(url, json=None, **kw):
+            appels.append((json["searchText"], json["offset"]))
+            return Rep({"total": 45, "jobPostings": postes[json["offset"]:json["offset"] + 20]})
+        DETAILS["/job/X/Stagiaire_R33"] = {"jobPostingInfo": {"jobDescription": "<p>Stage en gestion de fonds</p>"}}
+        offres = wd.collecter_workday(ID, "X", post=post, get=lambda u, **k: Rep(DETAILS[u.replace(BASE, "")]), robots=lambda u: True)
+        self.assertEqual([o["titre"] for o in offres], ["Stagiaire Gestion"])     # trouvé sur la 3e page
+        self.assertEqual(appels, [("", 0), ("", 20), ("", 40)])
+
+    def test_tres_gros_site_complete_par_mots_cles(self):
+        wd.MAX_TOTAL = 20
+        try:
+            appels = []
+            def post(url, json=None, **kw):
+                appels.append(json["searchText"])
+                return Rep({"total": 500, "jobPostings": []})
+            wd.collecter_workday(ID, "X", post=post, get=self.faux.get, robots=lambda u: True)
+            self.assertIn("intern", appels)
+        finally:
+            wd.MAX_TOTAL = 400
 
     def test_titres_stage_uniquement_et_doublons(self):
         titres = sorted(o["titre"] for o in self.collecter())
@@ -87,6 +110,39 @@ class TestWorkday(unittest.TestCase):
         self.collecter()
         self.assertFalse(any("R1001" in u for u in self.faux.gets))
         self.assertTrue(any("R1002" in u for u in self.faux.gets))  # offre inconnue : lue
+
+    def test_site_sans_offre_ou_format_inattendu(self):
+        class P:
+            def __init__(self, reponse): self.reponse = reponse
+            def __call__(self, url, json=None, **kw): return Rep(self.reponse)
+        vide = wd.collecter_workday(ID, "X", post=P({"total": 0, "jobPostings": []}), get=self.faux.get, robots=lambda u: True)
+        self.assertEqual(vide, [])                                   # site légitimement vide : pas d'erreur
+        with self.assertRaises(RuntimeError):                        # réponse sans la structure attendue : erreur claire
+            wd.collecter_workday(ID, "X", post=P({"erreur": "autre format"}), get=self.faux.get, robots=lambda u: True)
+
+    def test_offres_sans_stage(self):
+        class P:
+            def __call__(self, url, json=None, **kw):
+                return Rep({"total": 1, "jobPostings": [{"title": "Senior Accountant", "externalPath": "/job/X/Acc_R9", "locationsText": "London"}]})
+        self.assertEqual(wd.collecter_workday(ID, "X", post=P(), get=self.faux.get, robots=lambda u: True), [])
+
+    def test_trop_de_requetes_puis_reprise(self):
+        reponses = [Rep({}, 429, {"Retry-After": "7"}), Rep({}, 429), Rep({"total": 0, "jobPostings": []})]
+        def post(url, json=None, **kw): return reponses.pop(0)
+        self.assertEqual(wd.collecter_workday(ID, "X", post=post, get=self.faux.get, robots=lambda u: True), [])
+        self.assertEqual(reponses, [])                               # les 3 réponses ont été consommées : le robot a réessayé
+
+    def test_trop_de_requetes_persistant_source_ignoree(self):
+        from erreurs import SourceIgnoree
+        appels = []
+        def post(url, json=None, **kw): appels.append(1); return Rep({}, 429)
+        with self.assertRaises(SourceIgnoree):
+            wd.collecter_workday(ID, "X", post=post, get=self.faux.get, robots=lambda u: True)
+        self.assertEqual(len(appels), wd.ESSAIS_SUPPLEMENTAIRES + 1)
+
+    def test_attente_retry_after(self):
+        self.assertEqual(wd._attente(Rep({}, 429, {"Retry-After": "12"}), 0), 12)
+        self.assertEqual(wd._attente(Rep({}, 429), 1), 15)
 
     def test_enregistre_dans_les_connecteurs(self):
         self.assertIs(connecteurs.CONNECTEURS["workday"], wd.collecter_workday)

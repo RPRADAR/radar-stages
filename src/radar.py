@@ -22,6 +22,7 @@ from connecteur_jjf import recuperer_offres_jjf
 from connecteurs import recuperer_offres
 import enrichissement
 import workday
+from erreurs import SourceIgnoree
 from scoring import analyser, charger_societes
 
 RACINE = Path(__file__).resolve().parent.parent
@@ -67,11 +68,15 @@ def executer(chemin_db, sources, envoi=None, societes=None, verifier_liens=True,
     now = bd.maintenant()
     workday.CACHE_DESCRIPTION = lambda id_source: bd.description_connue(conn, id_source)   # évite de relire les offres déjà connues
     compte = {"lues": 0, "nouvelles": 0, "republiees": 0, "modifiees": 0, "doublons": 0}
-    erreurs, sources_ok = [], 0
+    erreurs, ignorees, sources_ok = [], [], 0
 
     for nom_source, collecteur in sources:
         try:
             offres = collecteur()
+        except SourceIgnoree as e:
+            ignorees.append(f"{nom_source} : {e}")
+            log.warning("Source ignorée : %s -> %s", nom_source, e)
+            continue
         except Exception as e:
             erreurs.append(f"{nom_source} : {type(e).__name__} : {e}")
             log.error("Source en erreur : %s -> %s", nom_source, e)
@@ -109,14 +114,14 @@ def executer(chemin_db, sources, envoi=None, societes=None, verifier_liens=True,
 
     tout_en_echec = sources_ok == 0
     if tout_en_echec:
-        statut, (objet, texte, corps), type_email = "erreur", emailing.composer_erreur(erreurs), "erreur"
+        statut, (objet, texte, corps), type_email = "erreur", emailing.composer_erreur(erreurs + ignorees), "erreur"
     elif a_notifier:
         statut = "ok" if not erreurs else "partielle"
-        (objet, texte, corps), type_email = emailing.composer_offres(a_notifier, erreurs), "offres"
+        (objet, texte, corps), type_email = emailing.composer_offres(a_notifier, erreurs, ignorees), "offres"
     elif erreurs:
         statut, (objet, texte, corps), type_email = "partielle", emailing.composer_erreur(erreurs, partiel=True), "partiel"
     else:
-        statut, (objet, texte, corps), type_email = "ok", emailing.composer_ras(), "ras"
+        statut, (objet, texte, corps), type_email = "ok", emailing.composer_ras(ignorees), "ras"
 
     bd.journaliser_verification(conn, now, statut, compte["lues"], compte["nouvelles"], compte["republiees"], compte["modifiees"], erreurs)
     envoye = False

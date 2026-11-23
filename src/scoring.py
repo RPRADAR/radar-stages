@@ -140,10 +140,16 @@ def extraire_debut(texte, aujourd_hui=None):
     return None
 
 
+PAYS_SEULS = {"france": "France", "royaume-uni": "Royaume-Uni", "united kingdom": "Royaume-Uni", "uk": "Royaume-Uni",
+              "suisse": "Suisse", "switzerland": "Suisse"}
+
+
 def _ville(lieu):
     l = _norm(lieu)
     if not l or "non precise" in l:
         return "Non précisé"
+    if l in PAYS_SEULS:
+        return PAYS_SEULS[l]      # seul le pays est connu (cas des flux RSS) : la ville est à vérifier
     for nom, cles in VILLES:
         if any(c in l for c in cles):
             return nom
@@ -222,6 +228,10 @@ def analyser(offre, societes_connues=None, aujourd_hui=None):
             penalite += 10
             resultat["alertes"].append(f"La description {texte_alerte}.")
 
+    # 2 bis. Localisation : uniquement Paris, Londres, Genève, Luxembourg (ou un pays ciblé dont la ville est inconnue)
+    if ville.startswith("Autre"):
+        return rejeter(f"localisation hors des 4 villes ciblées ({ville.replace('Autre : ', '')})")
+
     # 3. Date de début
     debut = extraire_debut(f"{offre.get('titre', '')} {offre.get('description', '')}", aujourd_hui)
     if debut:
@@ -279,6 +289,9 @@ def analyser(offre, societes_connues=None, aujourd_hui=None):
     if ville in ("Paris", "Londres", "Genève", "Luxembourg"):
         pts_lieu = 15
         resultat["raisons"].append(f"Localisation : {ville}.")
+    elif ville in ("France", "Royaume-Uni", "Suisse"):
+        pts_lieu = 10
+        resultat["alertes"].append(f"Seul le pays est indiqué ({ville}) : vérifie la ville sur l'annonce.")
     elif ville == "Non précisé":
         pts_lieu = 7
         resultat["alertes"].append("Ville non précisée.")

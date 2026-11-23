@@ -104,6 +104,17 @@ class TestRobot(unittest.TestCase):
         e = Envoi()
         self.assertEqual(self.run_([("jjf", source([BON]))], e)["type_email"], "offres")
 
+    def test_source_ignoree_n_est_ni_une_panne_ni_un_ras_muet(self):
+        from erreurs import SourceIgnoree
+        def limitee(): raise SourceIgnoree("erreur 429")
+        e = Envoi()
+        r = self.run_([("jjf", source([])), ("workday:x", limitee)], e)
+        self.assertEqual(r["type_email"], "ras")                           # pas de fausse alerte d'erreur
+        self.assertIn("Sources temporairement ignorées", e.mails[0][1])    # mais le RAS le dit honnêtement
+        self.assertIn("workday:x", e.mails[0][1])
+        r = self.run_([("workday:x", limitee)], e)                         # si TOUT est ignoré : c'est une erreur
+        self.assertEqual(r["type_email"], "erreur")
+
     def test_config_manquante(self):
         for k in ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "EMAIL_FROM", "EMAIL_TO"]:
             os.environ.pop(k, None)
